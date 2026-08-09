@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Flightbook</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px;
+    background: #0f172a;
+    color: #e2e8f0;
+  }
+  h1 { color: #38bdf8; }
+  h2 { color: #94a3b8; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 32px; }
+  .card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  input, button {
+    font-size: 14px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    margin: 4px 4px 4px 0;
+  }
+  input { background: #0f172a; color: #e2e8f0; width: 200px; }
+  button {
+    background: #38bdf8;
+    color: #0f172a;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+  }
+  button:hover { background: #0ea5e9; }
+  button:disabled { background: #475569; cursor: not-allowed; }
+  .flight {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    border-bottom: 1px solid #334155;
+  }
+  .flight:last-child { border-bottom: none; }
+  .seat-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 40px);
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .seat {
+    width: 40px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    background: #334155;
+  }
+  .seat.booked { background: #7f1d1d; cursor: not-allowed; color: #fca5a5; }
+  .seat.selected { background: #38bdf8; color: #0f172a; font-weight: bold; }
+  .status { font-size: 13px; margin-top: 8px; }
+  .status.error { color: #f87171; }
+  .status.success { color: #4ade80; }
+  #authBar { display: flex; justify-content: space-between; align-items: center; }
+</style>
+</head>
+<body>
+
+<h1>✈️ Flightbook</h1>
+
+<div id="authBar" class="card">
+  <div id="authStatus">Not logged in</div>
+  <button onclick="showLoginForm()">Login / Register</button>
+</div>
+
+<div id="authForm" class="card" style="display:none;">
+  <h2>Login or Register</h2>
+  <input id="email" placeholder="Email" type="email">
+  <input id="password" placeholder="Password" type="password">
+  <br>
+  <button onclick="register()">Register</button>
+  <button onclick="login()">Login</button>
+  <div id="authMsg" class="status"></div>
+</div>
+
+<div class="card">
+  <h2>Search Flights</h2>
+  <input id="origin" placeholder="Origin code (e.g. PNQ)">
+  <input id="destination" placeholder="Destination code (e.g. DEL)">
+  <button onclick="searchFlights()">Search</button>
+  <div id="flightResults"></div>
+</div>
+
+<div class="card">
+  <h2>Select Seat</h2>
+  <div id="seatSection">Search a flight and click "Select Seats" first.</div>
+</div>
+
+<div class="card">
+  <h2>My Bookings</h2>
+  <button onclick="loadMyBookings()">Refresh Bookings</button>
+  <div id="myBookings"></div>
+</div>
+
+<script>
+const API = "http://127.0.0.1:8000";
+let token = null;
+let selectedFlightId = null;
+let selectedSeatId = null;
+
+function showLoginForm() {
+  document.getElementById("authForm").style.display = "block";
+}
+
+async function register() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const msg = document.getElementById("authMsg");
+  try {
+    const res = await fetch(`${API}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, full_name: email.split("@")[0] })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Registration failed");
+    msg.textContent = "Registered! Now click Login.";
+    msg.className = "status success";
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "status error";
+  }
+}
+
+async function login() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const msg = document.getElementById("authMsg");
+  try {
+    const body = new URLSearchParams();
+    body.append("username", email);
+    body.append("password", password);
+    const res = await fetch(`${API}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Login failed");
+    token = data.access_token;
+    document.getElementById("authStatus").textContent = `Logged in as ${email}`;
+    document.getElementById("authForm").style.display = "none";
+    msg.textContent = "";
+    loadMyBookings();
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "status error";
+  }
+}
+
+async function searchFlights() {
+  const origin = document.getElementById("origin").value;
+  const destination = document.getElementById("destination").value;
+  const params = new URLSearchParams();
+  if (origin) params.append("origin", origin);
+  if (destination) params.append("destination", destination);
+
+  const res = await fetch(`${API}/flights/search?${params}`);
+  const flights = await res.json();
+  const container = document.getElementById("flightResults");
+
+  if (!flights.length) {
+    container.innerHTML = "<p>No flights found.</p>";
+    return;
+  }
+
+  container.innerHTML = flights.map(f => `
+    <div class="flight">
+      <div>
+        <strong>${f.flight_number}</strong> — ${f.origin.city} (${f.origin.code}) → ${f.destination.city} (${f.destination.code})<br>
+        <small>₹${f.price} · ${f.available_seats} seats available</small>
+      </div>
+      <button onclick="selectFlight(${f.id})">Select Seats</button>
+    </div>
+  `).join("");
+}
+
+async function selectFlight(flightId) {
+  selectedFlightId = flightId;
+  selectedSeatId = null;
+  const res = await fetch(`${API}/flights/${flightId}/seats`);
+  const seats = await res.json();
+  const container = document.getElementById("seatSection");
+
+  container.innerHTML = `
+    <div class="seat-grid">
+      ${seats.map(s => `
+        <div class="seat ${s.is_booked ? 'booked' : ''}"
+             id="seat-${s.id}"
+             onclick="${s.is_booked ? '' : `pickSeat(${s.id})`}">
+          ${s.seat_number}
+        </div>
+      `).join("")}
+    </div>
+    <br>
+    <input id="passengerName" placeholder="Passenger full name">
+    <input id="passengerAge" placeholder="Age" type="number" style="width:80px;">
+    <br>
+    <button onclick="bookSeat()">Confirm Booking</button>
+    <div id="bookingMsg" class="status"></div>
+  `;
+}
+
+function pickSeat(seatId) {
+  if (selectedSeatId) {
+    const prev = document.getElementById(`seat-${selectedSeatId}`);
+    if (prev) prev.classList.remove("selected");
+  }
+  selectedSeatId = seatId;
+  document.getElementById(`seat-${seatId}`).classList.add("selected");
+}
+
+async function bookSeat() {
+  const msg = document.getElementById("bookingMsg");
+  if (!token) {
+    msg.textContent = "Please login first.";
+    msg.className = "status error";
+    return;
+  }
+  if (!selectedSeatId) {
+    msg.textContent = "Please select a seat.";
+    msg.className = "status error";
+    return;
+  }
+  const passenger_name = document.getElementById("passengerName").value;
+  const passenger_age = parseInt(document.getElementById("passengerAge").value) || null;
+
+  try {
+    const res = await fetch(`${API}/bookings`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        flight_id: selectedFlightId,
+        seat_id: selectedSeatId,
+        passenger_name,
+        passenger_age
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Booking failed");
+    msg.textContent = `Booked! Reference: ${data.booking_reference}`;
+    msg.className = "status success";
+    selectFlight(selectedFlightId);
+    loadMyBookings();
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "status error";
+  }
+}
+
+async function loadMyBookings() {
+  if (!token) {
+    document.getElementById("myBookings").innerHTML = "<p>Login to see your bookings.</p>";
+    return;
+  }
+  const res = await fetch(`${API}/bookings/my`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  const bookings = await res.json();
+  const container = document.getElementById("myBookings");
+
+  if (!bookings.length) {
+    container.innerHTML = "<p>No bookings yet.</p>";
+    return;
+  }
+
+  container.innerHTML = bookings.map(b => `
+    <div class="flight">
+      <div>
+        <strong>${b.booking_reference}</strong> — ${b.passenger_name}<br>
+        <small>Status: ${b.status}</small>
+      </div>
+      ${b.status === "confirmed" ? `<button onclick="cancelBooking(${b.id})">Cancel</button>` : ""}
+    </div>
+  `).join("");
+}
+
+async function cancelBooking(bookingId) {
+  const res = await fetch(`${API}/bookings/${bookingId}/cancel`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  if (res.ok) loadMyBookings();
+}
+</script>
+
+</body>
+</html>
