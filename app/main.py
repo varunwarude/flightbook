@@ -2,7 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 from app.models import user, flight, seat, booking  # noqa: F401
-from app.routers import auth, flights, bookings
+from app.routers import auth, flights, bookings, analytics
+from app.routers import auth, flights, bookings, analytics, predict
+
 
 Base.metadata.create_all(bind=engine)
 
@@ -19,6 +21,8 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(flights.router)
 app.include_router(bookings.router)
+app.include_router(analytics.router)
+app.include_router(predict.router)
 
 
 @app.get("/health")
